@@ -53,7 +53,7 @@ def boxAndLineOverlap(x_mid_point, y_mid_point, line_coordinates):
     return False
 
 
-def displayFPS(start_time, num_frames):
+def displayFPS(start_time, num_frames, last_num_frames):
     """
     PURPOSE: Displaying the FPS of the detected video
     PARAMETERS: Start time of the frame, number of frames within the same second
@@ -62,10 +62,10 @@ def displayFPS(start_time, num_frames):
     current_time = int(time.time())
     if current_time > start_time:
         os.system("clear")  # Equivalent of CTRL+L on the terminal
-        print("FPS:", num_frames)
-        num_frames = 0
+        print(f"FPS: {num_frames - last_num_frames}")
+        last_num_frames = num_frames
         start_time = current_time
-    return start_time, num_frames
+    return start_time, num_frames, last_num_frames
 
 
 def drawDetectionBoxes(idxs, boxes, classIDs, confidences, frame, labels, colors):
@@ -244,21 +244,21 @@ def run(
     # Initialization
     previous_frame_detections = [{(0, 0): 0} for i in range(FRAMES_BEFORE_CURRENT)]
     # previous_frame_detections = [spatial.KDTree([(0,0)])]*FRAMES_BEFORE_CURRENT # Initializing all trees
-    num_frames, vehicle_count = 0, 0
+    num_frames, last_num_frames, vehicle_count = 0, 0, 0
     type_counts: dict[str, int] = defaultdict(int)
-    writer = initializeVideoWriter(video_width, video_height, videoStream, outputVideoPath)
+    writer = initializeVideoWriter(
+        video_width, video_height, videoStream, outputVideoPath
+    )
     start_time = int(time.time())
     # loop over frames from the video file stream
     while True:
-        print("================NEW FRAME================")
         num_frames += 1
-        print("FRAME:\t", num_frames)
         # Initialization for each iteration
         boxes, confidences, classIDs = [], [], []
         # vehicle_crossed_line_flag = False
 
         # Calculating fps each second
-        start_time, num_frames = displayFPS(start_time, num_frames)
+        start_time, num_frames, last_num_frames = displayFPS(start_time, num_frames, last_num_frames)
         # read the next frame from the file
         (grabbed, frame) = videoStream.read()
 
@@ -341,7 +341,7 @@ def run(
             frame,
             type_counts,
         )
-        print(f"Type counts: {dict(type_counts)}")
+        print(f"Frame: {num_frames}\t\tType counts: {dict(type_counts)}")
 
         # Display Vehicle Count if a vehicle has passed the line
         displayVehicleCount(frame, vehicle_count)
