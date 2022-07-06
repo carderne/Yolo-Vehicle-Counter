@@ -39,7 +39,8 @@ def parseCommandLineArguments():
         default=False,
         help="boolean indicating if CUDA GPU should be used",
     )
-    ap.add_argument("-X", default=False, type=bool, help="Use X video output")
+    ap.add_argument("-s", "--save", default=False, type=bool, help="Save tagged video to mp4")
+    ap.add_argument("-d", "--display", default=False, type=bool, help="Display tagged video while creating")
 
     args = vars(ap.parse_args())
 
@@ -56,7 +57,8 @@ def parseCommandLineArguments():
     confidence = args["confidence"]
     threshold = args["threshold"]
     use_gpu = args["use_gpu"]
-    use_x = args["X"]
+    save_video = args["save"]
+    display_video = args["display"]
 
     return (
         labels,
@@ -67,5 +69,6 @@ def parseCommandLineArguments():
         confidence,
         threshold,
         use_gpu,
-        use_x,
+        save_video,
+        display_video,
     )

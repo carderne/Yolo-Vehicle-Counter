@@ -151,6 +151,7 @@ def count_vehicles(
     previous_frame_detections,
     frame,
     type_counts,
+    use_x,
 ):
     current_detections = {}
     # ensure at least one detection exists
@@ -191,15 +192,16 @@ def count_vehicles(
                     type_counts[vehicle_type] += 1
 
                 # Display the ID at the center of the box
-                cv2.putText(
-                    frame,
-                    str(ID),
-                    (centerX, centerY),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    [0, 0, 255],
-                    2,
-                )
+                if use_x:
+                    cv2.putText(
+                        frame,
+                        str(ID),
+                        (centerX, centerY),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        [0, 0, 255],
+                        2,
+                    )
 
     return vehicle_count, current_detections, type_counts
 
@@ -214,7 +216,8 @@ def run(
     preDefinedConfidence,
     preDefinedThreshold,
     use_gpu,
-    use_x,
+    save_video,
+    display_video,
 ):
     # load our YOLO object detector trained on COCO dataset (80 classes)
     # and determine only the *output* layer names that we need from YOLO
@@ -246,9 +249,10 @@ def run(
     # previous_frame_detections = [spatial.KDTree([(0,0)])]*FRAMES_BEFORE_CURRENT # Initializing all trees
     num_frames, last_num_frames, vehicle_count = 0, 0, 0
     type_counts: dict[str, int] = defaultdict(int)
-    writer = initializeVideoWriter(
-        video_width, video_height, videoStream, outputVideoPath
-    )
+    if save_video:
+        writer = initializeVideoWriter(
+            video_width, video_height, videoStream, outputVideoPath
+        )
     start_time = int(time.time())
     # loop over frames from the video file stream
     while True:
@@ -329,7 +333,8 @@ def run(
         )
 
         # Draw detection box
-        drawDetectionBoxes(idxs, boxes, classIDs, confidences, frame, labels, colors)
+        if save_video or display_video:
+            drawDetectionBoxes(idxs, boxes, classIDs, confidences, frame, labels, colors)
 
         vehicle_count, current_detections, type_counts = count_vehicles(
             labels,
@@ -340,16 +345,20 @@ def run(
             previous_frame_detections,
             frame,
             type_counts,
+            save_video or display_video,
         )
         print(f"Frame: {num_frames}\t\tType counts: {dict(type_counts)}")
 
         # Display Vehicle Count if a vehicle has passed the line
-        displayVehicleCount(frame, vehicle_count)
+        if save_video or display_video:
+            displayVehicleCount(frame, vehicle_count)
 
         # write the output frame to disk
-        writer.write(frame)
+        if save_video:
+            writer.write(frame)
 
-        cv2.imshow("Frame", frame)
+        if display_video:
+            cv2.imshow("Frame", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
@@ -360,7 +369,8 @@ def run(
 
     # release the file pointers
     print("[INFO] cleaning up...")
-    writer.release()
+    if save_video:
+        writer.release()
     videoStream.release()
     print(f"Type counts: {dict(type_counts)}")
 
@@ -376,7 +386,8 @@ def main():
         preDefinedConfidence,
         preDefinedThreshold,
         use_gpu,
-        use_x,
+        save_video,
+        display_video,
     ) = parseCommandLineArguments()
     # Initialize a list of colors to represent each possible class label
     colors = np.random.randint(0, 255, size=(len(labels), 3), dtype="uint8")
@@ -390,7 +401,8 @@ def main():
         preDefinedConfidence,
         preDefinedThreshold,
         use_gpu,
-        use_x,
+        save_video,
+        display_video,
     )
 
 
