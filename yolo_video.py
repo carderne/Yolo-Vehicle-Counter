@@ -1,6 +1,7 @@
 # import the necessary packages
 import os
 import time
+from collections import defaultdict
 
 import cv2
 import imutils
@@ -147,7 +148,13 @@ def boxInPreviousFrames(previous_frame_detections, current_box, current_detectio
 
 
 def count_vehicles(
-    idxs, boxes, classIDs, vehicle_count, previous_frame_detections, frame
+    idxs,
+    boxes,
+    classIDs,
+    vehicle_count,
+    previous_frame_detections,
+    frame,
+    type_counts,
 ):
     current_detections = {}
     # ensure at least one detection exists
@@ -164,7 +171,8 @@ def count_vehicles(
             # When the detection is in the list of vehicles, AND
             # it crosses the line AND
             # the ID of the detection is not present in the vehicles
-            if LABELS[classIDs[i]] in list_of_vehicles:
+            vehicle_type = LABELS[classIDs[i]]
+            if vehicle_type in list_of_vehicles:
                 current_detections[(centerX, centerY)] = vehicle_count
                 if not boxInPreviousFrames(
                     previous_frame_detections,
@@ -172,6 +180,7 @@ def count_vehicles(
                     current_detections,
                 ):
                     vehicle_count += 1
+                    type_counts[vehicle_type] += 1
                     # vehicle_crossed_line_flag += True
                 # else: #ID assigning
                 # Add the current detection mid-point of box to the list of detected items
@@ -183,6 +192,7 @@ def count_vehicles(
                 if list(current_detections.values()).count(ID) > 1:
                     current_detections[(centerX, centerY)] = vehicle_count
                     vehicle_count += 1
+                    type_counts[vehicle_type] += 1
 
                 # Display the ID at the center of the box
                 cv2.putText(
@@ -195,7 +205,7 @@ def count_vehicles(
                     2,
                 )
 
-    return vehicle_count, current_detections
+    return vehicle_count, current_detections, type_counts
 
 
 # load our YOLO object detector trained on COCO dataset (80 classes)
@@ -227,6 +237,7 @@ y2_line = video_height // 2
 previous_frame_detections = [{(0, 0): 0} for i in range(FRAMES_BEFORE_CURRENT)]
 # previous_frame_detections = [spatial.KDTree([(0,0)])]*FRAMES_BEFORE_CURRENT # Initializing all trees
 num_frames, vehicle_count = 0, 0
+type_counts: dict[str, int] = defaultdict(int)
 writer = initializeVideoWriter(video_width, video_height, videoStream)
 start_time = int(time.time())
 # loop over frames from the video file stream
@@ -312,9 +323,16 @@ while True:
     # Draw detection box
     drawDetectionBoxes(idxs, boxes, classIDs, confidences, frame)
 
-    vehicle_count, current_detections = count_vehicles(
-        idxs, boxes, classIDs, vehicle_count, previous_frame_detections, frame
+    vehicle_count, current_detections, type_counts = count_vehicles(
+        idxs,
+        boxes,
+        classIDs,
+        vehicle_count,
+        previous_frame_detections,
+        frame,
+        type_counts,
     )
+    print(f"Type counts: {dict(type_counts)}")
 
     # Display Vehicle Count if a vehicle has passed the line
     displayVehicleCount(frame, vehicle_count)
@@ -335,3 +353,4 @@ while True:
 print("[INFO] cleaning up...")
 writer.release()
 videoStream.release()
+print(f"Type counts: {dict(type_counts)}")
