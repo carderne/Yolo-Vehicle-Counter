@@ -170,7 +170,7 @@ if USE_GPU:
 	net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
 
 ln = net.getLayerNames()
-ln = [ln[i[0] - 1] for i in net.getUnconnectedOutLayers()]
+ln = [ln[i - 1] for i in net.getUnconnectedOutLayers()]
 
 # initialize the video stream, pointer to output video file, and
 # frame dimensions
