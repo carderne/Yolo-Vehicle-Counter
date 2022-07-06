@@ -39,12 +39,13 @@ def parseCommandLineArguments():
         default=False,
         help="boolean indicating if CUDA GPU should be used",
     )
+    ap.add_argument("-X", default=False, type=bool, help="Use X video output")
 
     args = vars(ap.parse_args())
 
     # load the COCO class labels our YOLO model was trained on
     labelsPath = os.path.sep.join([args["yolo"], "coco.names"])
-    LABELS = open(labelsPath).read().strip().split("\n")
+    labels = open(labelsPath).read().strip().split("\n")
 
     # derive the paths to the YOLO weights and model configuration
     weightsPath = os.path.sep.join([args["yolo"], "yolov3.weights"])
@@ -54,15 +55,17 @@ def parseCommandLineArguments():
     outputVideoPath = args["output"]
     confidence = args["confidence"]
     threshold = args["threshold"]
-    USE_GPU = args["use_gpu"]
+    use_gpu = args["use_gpu"]
+    use_x = args["X"]
 
     return (
-        LABELS,
+        labels,
         weightsPath,
         configPath,
         inputVideoPath,
         outputVideoPath,
         confidence,
         threshold,
-        USE_GPU,
+        use_gpu,
+        use_x,
     )
