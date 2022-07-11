@@ -2,16 +2,16 @@ import os
 import time
 from collections import defaultdict
 from datetime import timedelta
+from pathlib import Path
 from typing import NamedTuple
 
 import cv2  # type: ignore[import]
 import numpy as np
 from scipy import spatial  # type: ignore[import]
-
-from input_retrieval import parseCommandLineArguments
+from typer import Argument, Option, Typer  # type: ignore[import]
 
 # All these classes will be counted as 'vehicles'
-list_of_vehicles = ["bicycle", "car", "motorbike", "bus", "truck", "train"]
+list_of_vehicles = ["bicycle", "person", "car", "motorbike", "bus", "truck", "train"]
 
 # Setting the threshold for the number of frames to search a vehicle for
 FRAMES_BEFORE_CURRENT = 10
@@ -46,7 +46,7 @@ def is_right(L: Line, p: Point) -> bool:
 
 
 def displayVehicleCount(
-    frame,
+    frame: np.ndarray,
     vehicle_count: int,
     crossers: list[Cross],
 ) -> None:
@@ -56,10 +56,11 @@ def displayVehicleCount(
     RETURN: N/A
     """
     num_bikes = len(list(filter(lambda x: x.vtype == "bicycle", crossers)))
-    num_other = len(crossers) - num_bikes
+    num_person = len(list(filter(lambda x: x.vtype == "person", crossers)))
+    num_other = len(crossers) - num_bikes - num_person
     cv2.putText(
         frame,
-        f"Detected: {vehicle_count} // Bike Crossers: {num_bikes} // Other Crossers: {num_other}",
+        f"Detected: {vehicle_count} // Bikes: {num_bikes} // Person: {num_person} // Other: {num_other}",
         (20, 20),  # Position
         cv2.FONT_HERSHEY_SIMPLEX,
         0.8,  # Size
@@ -88,12 +89,12 @@ def displayFPS(
 
 
 def drawDetectionBoxes(
-    idxs,
+    idxs: np.ndarray,
     boxes: list[Box],
     classIDs: list[int],
     confidences: list[float],
-    frame,
-    labels: dict[str, str],
+    frame: np.ndarray,
+    labels: list[str],
     colors: list[list[int]],
 ) -> None:
     """
@@ -121,11 +122,11 @@ def drawDetectionBoxes(
             )
 
 
-def initializeVideoWriter(
+def initializeVideoWriter(  # type: ignore[no-any-unimported]
     video_width: int,
     video_height: int,
     videoStream: cv2.VideoCapture,
-    outputVideoPath: str,
+    outputVideoPath: Path,
 ) -> cv2.VideoWriter:
     """
     PURPOSE: Initializing the video writer with the output video path and the same number
@@ -138,7 +139,7 @@ def initializeVideoWriter(
     # initialize our video writer
     fourcc = cv2.VideoWriter_fourcc(*"MJPG")
     return cv2.VideoWriter(
-        outputVideoPath, fourcc, sourceVideofps, (video_width, video_height), True
+        str(outputVideoPath), fourcc, sourceVideofps, (video_width, video_height), True
     )
 
 
@@ -180,17 +181,17 @@ def boxInPreviousFrames(
 
 
 def count_vehicles(
-    labels: dict[str, str],
-    idxs,
+    labels: list[str],
+    idxs: np.ndarray,
     boxes: list[Box],
     classIDs: list[int],
     vehicle_count: int,
     previous_frame_detections: list[dict[Point, int]],
-    frame,
+    frame: np.ndarray,
     type_counts: dict[str, int],
     vehicle_types: dict[int, str],
     use_x: bool,
-):
+) -> tuple[int, dict[Point, int], dict[str, int], dict[int, str]]:
     current_detections: dict[Point, int] = {}
     # ensure at least one detection exists
     if len(idxs) > 0:
@@ -248,23 +249,22 @@ def count_vehicles(
     return vehicle_count, current_detections, type_counts, vehicle_types
 
 
-def run(
-    labels,
+def process(
+    labels: list[str],
     colors: list[list[int]],
-    weightsPath,
-    configPath,
-    inputVideoPath,
-    outputVideoPath,
-    preDefinedConfidence,
-    preDefinedThreshold,
+    weights: Path,
+    config: Path,
+    video: Path,
+    output: Path | bool,
+    preDefinedConfidence: float,
+    preDefinedThreshold: float,
     use_gpu: bool,
-    save_video: bool,
     display_video: bool,
 ) -> None:
     # load our YOLO object detector trained on COCO dataset (80 classes)
     # and determine only the *output* layer names that we need from YOLO
     print("[INFO] loading YOLO from disk...")
-    net = cv2.dnn.readNetFromDarknet(configPath, weightsPath)
+    net = cv2.dnn.readNetFromDarknet(str(config), str(weights))
 
     # Using GPU if flag is passed
     if use_gpu:
@@ -276,7 +276,7 @@ def run(
 
     # initialize the video stream, pointer to output video file, and
     # frame dimensions
-    videoStream = cv2.VideoCapture(inputVideoPath)
+    videoStream = cv2.VideoCapture(str(video))
     video_width = int(videoStream.get(cv2.CAP_PROP_FRAME_WIDTH))
     video_height = int(videoStream.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
@@ -293,10 +293,8 @@ def run(
     vehicle_types: dict[int, str] = {}
 
     num_frames, last_num_frames, vehicle_count = 0, 0, 0
-    if save_video:
-        writer = initializeVideoWriter(
-            video_width, video_height, videoStream, outputVideoPath
-        )
+    if output and isinstance(output, Path):
+        writer = initializeVideoWriter(video_width, video_height, videoStream, output)
     start_time = int(time.time())
     # loop over frames from the video file stream
     while True:
@@ -329,9 +327,9 @@ def run(
         layerOutputs = net.forward(ln)
 
         # loop over each of the layer outputs
-        for output in layerOutputs:
+        for layer in layerOutputs:
             # loop over each of the detections
-            for i, detection in enumerate(output):
+            for i, detection in enumerate(layer):
                 # extract the class ID and confidence (i.e., probability)
                 # of the current object detection
                 scores = detection[5:]
@@ -370,7 +368,7 @@ def run(
         )
 
         # Draw detection box
-        if save_video or display_video:
+        if output or display_video:
             drawDetectionBoxes(
                 idxs, boxes, classIDs, confidences, frame, labels, colors
             )
@@ -385,7 +383,7 @@ def run(
             frame,
             type_counts,
             vehicle_types,
-            save_video or display_video,
+            bool(output or display_video),
         )
 
         print(f"{ts=}\t{num_frames=}\t{len(crossers)=}")
@@ -402,11 +400,11 @@ def run(
             vehicle_locs[ID] = new_loc
 
         # Display Vehicle Count if a vehicle has passed the line
-        if save_video or display_video:
+        if output or display_video:
             displayVehicleCount(frame, vehicle_count, crossers)
 
         # write the output frame to disk
-        if save_video:
+        if output:
             writer.write(frame)
 
         if display_video:
@@ -420,43 +418,53 @@ def run(
 
     # release the file pointers
     print("[INFO] cleaning up...")
-    if save_video:
+    if output:
         writer.release()
     videoStream.release()
     print(f"Type counts: {dict(type_counts)}")
     print(f"Crossers: {crossers}")
 
 
-def main():
-    # Parse command line arguments and extract the values required
-    (
-        labels,
-        weightsPath,
-        configPath,
-        inputVideoPath,
-        outputVideoPath,
-        preDefinedConfidence,
-        preDefinedThreshold,
-        use_gpu,
-        save_video,
-        display_video,
-    ) = parseCommandLineArguments()
-    # Initialize a list of colors to represent each possible class label
+def main(
+    video: Path = Argument(..., help="Path to input video"),
+    model: Path = Option("yolo-coco", help="Path to Yolo model dir"),
+    output: Path = Option("", help="Path to save output if wanted"),
+    confidence: float = Option(
+        0.5, help="Minimum probability to filter weak detections"
+    ),
+    threshold: float = Option(
+        0.3, help="Threshold when applying non-maxima suppression"
+    ),
+    display: bool = Option(False, help="Display tagged video while creating"),
+    use_gpu: bool = Option(False, help="Accelerate with CUDA/GPU"),
+) -> None:
+    video = Path(video)
+    model = Path(model)
+    output_new: Path | bool = Path(output) if output else False
+    labels = (model / "coco.names").open().read().strip().split("\n")
+    weights = model / "yolov3.weights"
+    config = model / "yolov3.cfg"
     colors = np.random.randint(0, 255, size=(len(labels), 3), dtype="uint8").tolist()
-    run(
+
+    process(
         labels,
         colors,
-        weightsPath,
-        configPath,
-        inputVideoPath,
-        outputVideoPath,
-        preDefinedConfidence,
-        preDefinedThreshold,
+        weights,
+        config,
+        video,
+        output_new,
+        confidence,
+        threshold,
         use_gpu,
-        save_video,
-        display_video,
+        display,
     )
 
 
+def cli() -> None:
+    app = Typer(add_completion=False)
+    app.command()(main)
+    app()
+
+
 if __name__ == "__main__":
-    main()
+    cli()
