@@ -2,6 +2,7 @@ import os
 import time
 from collections import defaultdict
 from datetime import timedelta
+from typing import NamedTuple
 
 import cv2  # type: ignore[import]
 import numpy as np
@@ -17,17 +18,44 @@ FRAMES_BEFORE_CURRENT = 10
 inputWidth, inputHeight = 416, 416
 
 
+class Point(NamedTuple):
+    x: int
+    y: int
+
+
+class Line(NamedTuple):
+    a: Point
+    b: Point
+
+
+class Box(NamedTuple):
+    x: int
+    y: int
+    w: int
+    h: int
+
+
+class Cross(NamedTuple):
+    vtype: str
+    ts: str
+    ID: int
+
+
+def is_right(L: Line, p: Point) -> bool:
+    return ((L.b.x - L.a.x) * (p.y - L.a.y) - (L.b.y - L.a.y) * (p.x - L.a.x)) < 0
+
+
 def displayVehicleCount(
     frame,
     vehicle_count: int,
-    crossers: list,
+    crossers: list[Cross],
 ) -> None:
     """
     PURPOSE: Displays the vehicle count on the top-left corner of the frame
     PARAMETERS: Frame on which the count is displayed, the count number of vehicles
     RETURN: N/A
     """
-    num_bikes = len(list(filter(lambda x: x[0] == "bike", crossers)))
+    num_bikes = len(list(filter(lambda x: x.vtype == "bicycle", crossers)))
     num_other = len(crossers) - num_bikes
     cv2.putText(
         frame,
@@ -39,24 +67,6 @@ def displayVehicleCount(
         2,  # Thickness
         cv2.FONT_HERSHEY_COMPLEX_SMALL,
     )
-
-
-def boxAndLineOverlap(x_mid_point, y_mid_point, line_coordinates) -> bool:
-    """
-    PURPOSE: Determining if the box-mid point cross the line or are within the range of 5 units
-    from the line
-    PARAMETERS: X Mid-Point of the box, Y mid-point of the box, Coordinates of the line
-    RETURN:
-    - True if the midpoint of the box overlaps with the line within a threshold of 5 units
-    - False if the midpoint of the box lies outside the line and threshold
-    """
-    x1_line, y1_line, x2_line, y2_line = line_coordinates  # Unpacking
-
-    if (x_mid_point >= x1_line and x_mid_point <= x2_line + 5) and (
-        y_mid_point >= y1_line and y_mid_point <= y2_line + 5
-    ):
-        return True
-    return False
 
 
 def displayFPS(
@@ -79,7 +89,7 @@ def displayFPS(
 
 def drawDetectionBoxes(
     idxs,
-    boxes: list[list[int]],
+    boxes: list[Box],
     classIDs: list[int],
     confidences: list[float],
     frame,
@@ -95,8 +105,8 @@ def drawDetectionBoxes(
         # loop over the indices we are keeping
         for i in idxs.flatten():
             # extract the bounding box coordinates
-            (x, y) = (boxes[i][0], boxes[i][1])
-            (w, h) = (boxes[i][2], boxes[i][3])
+            (x, y) = (boxes[i].x, boxes[i].y)
+            (w, h) = (boxes[i].w, boxes[i].h)
 
             # draw a bounding box rectangle and label on the frame
             color = [int(c) for c in colors[classIDs[i]]]
@@ -133,9 +143,10 @@ def initializeVideoWriter(
 
 
 def boxInPreviousFrames(
-    previous_frame_detections: list[dict[tuple, int]],
-    current_box: tuple[int, int, int, int],
-    current_detections: dict[tuple, int],
+    previous_frame_detections: list[dict[Point, int]],
+    current_detections: dict[Point, int],
+    current_point: Point,
+    max_dist: int,
 ) -> int:
     """
     PURPOSE: Identifying if the current box was present in the previous frames
@@ -144,7 +155,8 @@ def boxInPreviousFrames(
     RETURN: True if the box was current box was present in the previous frames;
             False if the box was not present in the previous frames
     """
-    centerX, centerY, width, height = current_box
+    # centerX, centerY, width, height = current_box
+    x, y = current_point
     dist = np.inf  # Initializing the minimum distance
     # Iterating through all the k-dimensional trees
     for i in range(FRAMES_BEFORE_CURRENT):
@@ -154,13 +166,13 @@ def boxInPreviousFrames(
         ):  # When there are no detections in the previous frame
             continue
         # Finding the distance to the closest point and the index
-        temp_dist, index = spatial.KDTree(coordinate_list).query([(centerX, centerY)])
+        temp_dist, index = spatial.KDTree(coordinate_list).query([current_point])
         if temp_dist < dist:
             dist = temp_dist
             frame_num = i
             coord = coordinate_list[index[0]]
 
-    if dist > (max(width, height) / 2):
+    if dist > max_dist:
         return -1
 
     # Keeping the vehicle ID constant
@@ -170,23 +182,24 @@ def boxInPreviousFrames(
 def count_vehicles(
     labels: dict[str, str],
     idxs,
-    boxes: list[list[int]],
+    boxes: list[Box],
     classIDs: list[int],
     vehicle_count: int,
-    previous_frame_detections: list[dict[tuple, int]],
+    previous_frame_detections: list[dict[Point, int]],
     frame,
     type_counts: dict[str, int],
     vehicle_types: dict[int, str],
     use_x: bool,
 ):
-    current_detections: dict[tuple, int] = {}
+    current_detections: dict[Point, int] = {}
     # ensure at least one detection exists
     if len(idxs) > 0:
         # loop over the indices we are keeping
         for i in idxs.flatten():
             # extract the bounding box coordinates
-            (x, y) = (boxes[i][0], boxes[i][1])
-            (w, h) = (boxes[i][2], boxes[i][3])
+            box = boxes[i]
+            x, y = box.x, box.y
+            w, h = box.w, box.h
 
             centerX = x + (w // 2)
             centerY = y + (h // 2)
@@ -196,26 +209,27 @@ def count_vehicles(
             # the ID of the detection is not present in the vehicles
             vehicle_type = labels[classIDs[i]]
             if vehicle_type in list_of_vehicles:
-                current_detections[(centerX, centerY)] = vehicle_count
+                current_detections[Point(centerX, centerY)] = vehicle_count
                 prev_id = boxInPreviousFrames(
                     previous_frame_detections,
-                    (centerX, centerY, w, h),
                     current_detections,
+                    Point(centerX, centerY),
+                    max_dist=max(w, h) / 2,
                 )
                 if prev_id >= 0:
-                    current_detections[(centerX, centerY)] = prev_id
+                    current_detections[Point(centerX, centerY)] = prev_id
                 else:
                     vehicle_count += 1
                     type_counts[vehicle_type] += 1
 
                 # Add the current detection mid-point of box to the list of detected items
                 # Get the ID corresponding to the current detection
-                ID = current_detections[(centerX, centerY)]
+                ID = current_detections[Point(centerX, centerY)]
                 vehicle_types[ID] = vehicle_type
                 # If there are two detections having the same ID due to being too close,
                 # then assign a new ID to current detection.
                 if list(current_detections.values()).count(ID) > 1:
-                    current_detections[(centerX, centerY)] = vehicle_count
+                    current_detections[Point(centerX, centerY)] = vehicle_count
                     vehicle_count += 1
                     type_counts[vehicle_type] += 1
 
@@ -267,17 +281,14 @@ def run(
     video_height = int(videoStream.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     # Specifying coordinates for a default line
-    x1_line = 0
-    y1_line = video_height // 2
-    x2_line = video_width
-    y2_line = video_height // 2
+    cross_line = Line(Point(0, 0), Point(video_width, video_height))
 
     # Initialization
-    previous_frame_detections: list[dict[tuple, int]] = [
-        {(0, 0): 0} for i in range(FRAMES_BEFORE_CURRENT)
+    previous_frame_detections: list[dict[Point, int]] = [
+        {Point(0, 0): 0} for i in range(FRAMES_BEFORE_CURRENT)
     ]
     vehicle_locs: dict[int, bool] = {}
-    crossers: list[tuple[str, str, int]] = []
+    crossers: list[Cross] = []
     type_counts: dict[str, int] = defaultdict(int)
     vehicle_types: dict[int, str] = {}
 
@@ -293,7 +304,9 @@ def run(
         # Initialization for each iteration
         boxes, confidences, classIDs = [], [], []
 
-        ts = str(timedelta(seconds=videoStream.get(cv2.CAP_PROP_POS_MSEC) / 1000)).split(".")[0]
+        ts = str(
+            timedelta(seconds=videoStream.get(cv2.CAP_PROP_POS_MSEC) / 1000)
+        ).split(".")[0]
 
         # Calculating fps each second
         start_time, num_frames, last_num_frames = displayFPS(
@@ -344,11 +357,11 @@ def run(
 
                     # update our list of bounding box coordinates,
                     # confidences, and class IDs
-                    boxes.append([x, y, int(width), int(height)])
+                    boxes.append(Box(x, y, int(width), int(height)))
                     confidences.append(float(confidence))
                     classIDs.append(classID)
 
-        cv2.line(frame, (x1_line, y1_line), (x2_line, y2_line), (0, 0xFF, 0), 2)
+        cv2.line(frame, cross_line.a, cross_line.b, (0, 0xFF, 0), 2)
 
         # apply non-maxima suppression to suppress weak, overlapping
         # bounding boxes
@@ -377,14 +390,15 @@ def run(
 
         print(f"{ts=}\t{num_frames=}\t{len(crossers)=}")
 
-        for (centerX, centerY), ID in current_detections.items():
-            new_loc = centerY > (video_height // 2)
+        for p, ID in current_detections.items():
+            # new_loc = centerY > (video_height // 2)
+            new_loc = is_right(cross_line, p)
             if ID in vehicle_locs.keys():
                 old_loc = vehicle_locs[ID]
-                if new_loc != old_loc:
-                    print(f"\tCROSSED: {centerX=} {centerY=} {ID=} {ts=}")
+                if new_loc != old_loc and ID not in [c[2] for c in crossers]:
+                    print(f"\tCROSSED: {ts=} {ID=} {p=} {old_loc=} {new_loc=}")
                     vt = vehicle_types[ID]
-                    crossers.append((vt, ts, ID))
+                    crossers.append(Cross(vt, ts, ID))
             vehicle_locs[ID] = new_loc
 
         # Display Vehicle Count if a vehicle has passed the line
