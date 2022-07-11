@@ -1,6 +1,7 @@
 import os
 import time
 from collections import defaultdict
+from datetime import timedelta
 
 import cv2  # type: ignore[import]
 import numpy as np
@@ -19,17 +20,20 @@ inputWidth, inputHeight = 416, 416
 def displayVehicleCount(
     frame,
     vehicle_count: int,
+    crossers: list,
 ) -> None:
     """
     PURPOSE: Displays the vehicle count on the top-left corner of the frame
     PARAMETERS: Frame on which the count is displayed, the count number of vehicles
     RETURN: N/A
     """
+    num_bikes = len(list(filter(lambda x: x[0] == "bike", crossers)))
+    num_other = len(crossers) - num_bikes
     cv2.putText(
-        frame,  # Image
-        "Detected Vehicles: " + str(vehicle_count),  # Label
+        frame,
+        f"Detected: {vehicle_count} // Bike Crossers: {num_bikes} // Other Crossers: {num_other}",
         (20, 20),  # Position
-        cv2.FONT_HERSHEY_SIMPLEX,  # Font
+        cv2.FONT_HERSHEY_SIMPLEX,
         0.8,  # Size
         (0, 0xFF, 0),  # Color
         2,  # Thickness
@@ -64,9 +68,10 @@ def displayFPS(
     RETURN: New start time, new number of frames
     """
     current_time = int(time.time())
-    if current_time > start_time:
+    if num_frames > (last_num_frames + 10):
         os.system("clear")  # Equivalent of CTRL+L on the terminal
-        print(f"FPS: {num_frames - last_num_frames}")
+        fps = (num_frames - last_num_frames) / (current_time - start_time)
+        print(f"FPS: {fps:.2f}")
         last_num_frames = num_frames
         start_time = current_time
     return start_time, num_frames, last_num_frames
@@ -171,6 +176,7 @@ def count_vehicles(
     previous_frame_detections: list[dict[tuple, int]],
     frame,
     type_counts: dict[str, int],
+    vehicle_types: dict[int, str],
     use_x: bool,
 ):
     current_detections: dict[tuple, int] = {}
@@ -201,11 +207,11 @@ def count_vehicles(
                 else:
                     vehicle_count += 1
                     type_counts[vehicle_type] += 1
-                    # vehicle_crossed_line_flag += True
 
                 # Add the current detection mid-point of box to the list of detected items
                 # Get the ID corresponding to the current detection
                 ID = current_detections[(centerX, centerY)]
+                vehicle_types[ID] = vehicle_type
                 # If there are two detections having the same ID due to being too close,
                 # then assign a new ID to current detection.
                 if list(current_detections.values()).count(ID) > 1:
@@ -225,7 +231,7 @@ def count_vehicles(
                         2,
                     )
 
-    return vehicle_count, current_detections, type_counts
+    return vehicle_count, current_detections, type_counts, vehicle_types
 
 
 def run(
@@ -270,8 +276,12 @@ def run(
     previous_frame_detections: list[dict[tuple, int]] = [
         {(0, 0): 0} for i in range(FRAMES_BEFORE_CURRENT)
     ]
-    num_frames, last_num_frames, vehicle_count = 0, 0, 0
+    vehicle_locs: dict[int, bool] = {}
+    crossers: list[tuple[str, str, int]] = []
     type_counts: dict[str, int] = defaultdict(int)
+    vehicle_types: dict[int, str] = {}
+
+    num_frames, last_num_frames, vehicle_count = 0, 0, 0
     if save_video:
         writer = initializeVideoWriter(
             video_width, video_height, videoStream, outputVideoPath
@@ -282,7 +292,8 @@ def run(
         num_frames += 1
         # Initialization for each iteration
         boxes, confidences, classIDs = [], [], []
-        # vehicle_crossed_line_flag = False
+
+        ts = str(timedelta(seconds=videoStream.get(cv2.CAP_PROP_POS_MSEC) / 1000)).split(".")[0]
 
         # Calculating fps each second
         start_time, num_frames, last_num_frames = displayFPS(
@@ -331,9 +342,6 @@ def run(
                     x = int(centerX - (width / 2))
                     y = int(centerY - (height / 2))
 
-                    # Printing the info of the detection
-                    # print(f"Name: {labels[classID]} | BOX: f{x} f{y}")
-
                     # update our list of bounding box coordinates,
                     # confidences, and class IDs
                     boxes.append([x, y, int(width), int(height)])
@@ -341,12 +349,6 @@ def run(
                     classIDs.append(classID)
 
         cv2.line(frame, (x1_line, y1_line), (x2_line, y2_line), (0, 0xFF, 0), 2)
-        # # Changing line color to green if a vehicle in the frame has crossed the line
-        # if vehicle_crossed_line_flag:
-        #   cv2.line(frame, (x1_line, y1_line), (x2_line, y2_line), (0, 0xFF, 0), 2)
-        # # Changing line color to red if a vehicle in the frame has not crossed the line
-        # else:
-        #   cv2.line(frame, (x1_line, y1_line), (x2_line, y2_line), (0, 0, 0xFF), 2)
 
         # apply non-maxima suppression to suppress weak, overlapping
         # bounding boxes
@@ -360,7 +362,7 @@ def run(
                 idxs, boxes, classIDs, confidences, frame, labels, colors
             )
 
-        vehicle_count, current_detections, type_counts = count_vehicles(
+        vehicle_count, current_detections, type_counts, vehicle_types = count_vehicles(
             labels,
             idxs,
             boxes,
@@ -369,13 +371,25 @@ def run(
             previous_frame_detections,
             frame,
             type_counts,
+            vehicle_types,
             save_video or display_video,
         )
-        print(f"Frame: {num_frames}\t\tType counts: {dict(type_counts)}")
+
+        print(f"{ts=}\t{num_frames=}\t{len(crossers)=}")
+
+        for (centerX, centerY), ID in current_detections.items():
+            new_loc = centerY > (video_height // 2)
+            if ID in vehicle_locs.keys():
+                old_loc = vehicle_locs[ID]
+                if new_loc != old_loc:
+                    print(f"\tCROSSED: {centerX=} {centerY=} {ID=} {ts=}")
+                    vt = vehicle_types[ID]
+                    crossers.append((vt, ts, ID))
+            vehicle_locs[ID] = new_loc
 
         # Display Vehicle Count if a vehicle has passed the line
         if save_video or display_video:
-            displayVehicleCount(frame, vehicle_count)
+            displayVehicleCount(frame, vehicle_count, crossers)
 
         # write the output frame to disk
         if save_video:
@@ -396,6 +410,7 @@ def run(
         writer.release()
     videoStream.release()
     print(f"Type counts: {dict(type_counts)}")
+    print(f"Crossers: {crossers}")
 
 
 def main():
