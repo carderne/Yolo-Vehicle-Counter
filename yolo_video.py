@@ -2,10 +2,9 @@ import os
 import time
 from collections import defaultdict
 
-import cv2
-import imutils
+import cv2  # type: ignore[import]
 import numpy as np
-from scipy import spatial
+from scipy import spatial  # type: ignore[import]
 
 from input_retrieval import parseCommandLineArguments
 
@@ -17,7 +16,10 @@ FRAMES_BEFORE_CURRENT = 10
 inputWidth, inputHeight = 416, 416
 
 
-def displayVehicleCount(frame, vehicle_count):
+def displayVehicleCount(
+    frame,
+    vehicle_count: int,
+) -> None:
     """
     PURPOSE: Displays the vehicle count on the top-left corner of the frame
     PARAMETERS: Frame on which the count is displayed, the count number of vehicles
@@ -35,7 +37,7 @@ def displayVehicleCount(frame, vehicle_count):
     )
 
 
-def boxAndLineOverlap(x_mid_point, y_mid_point, line_coordinates):
+def boxAndLineOverlap(x_mid_point, y_mid_point, line_coordinates) -> bool:
     """
     PURPOSE: Determining if the box-mid point cross the line or are within the range of 5 units
     from the line
@@ -53,7 +55,9 @@ def boxAndLineOverlap(x_mid_point, y_mid_point, line_coordinates):
     return False
 
 
-def displayFPS(start_time, num_frames, last_num_frames):
+def displayFPS(
+    start_time: int, num_frames: int, last_num_frames: int
+) -> tuple[int, int, int]:
     """
     PURPOSE: Displaying the FPS of the detected video
     PARAMETERS: Start time of the frame, number of frames within the same second
@@ -68,7 +72,15 @@ def displayFPS(start_time, num_frames, last_num_frames):
     return start_time, num_frames, last_num_frames
 
 
-def drawDetectionBoxes(idxs, boxes, classIDs, confidences, frame, labels, colors):
+def drawDetectionBoxes(
+    idxs,
+    boxes: list[list[int]],
+    classIDs: list[int],
+    confidences: list[float],
+    frame,
+    labels: dict[str, str],
+    colors: list[list[int]],
+) -> None:
     """
     PURPOSE: Draw all the detection boxes with a green dot at the center
     RETURN: N/A
@@ -94,7 +106,12 @@ def drawDetectionBoxes(idxs, boxes, classIDs, confidences, frame, labels, colors
             )
 
 
-def initializeVideoWriter(video_width, video_height, videoStream, outputVideoPath):
+def initializeVideoWriter(
+    video_width: int,
+    video_height: int,
+    videoStream: cv2.VideoCapture,
+    outputVideoPath: str,
+) -> cv2.VideoWriter:
     """
     PURPOSE: Initializing the video writer with the output video path and the same number
     of fps, width and height as the source video
@@ -110,7 +127,11 @@ def initializeVideoWriter(video_width, video_height, videoStream, outputVideoPat
     )
 
 
-def boxInPreviousFrames(previous_frame_detections, current_box, current_detections):
+def boxInPreviousFrames(
+    previous_frame_detections: list[dict[tuple, int]],
+    current_box: tuple[int, int, int, int],
+    current_detections: dict[tuple, int],
+) -> int:
     """
     PURPOSE: Identifying if the current box was present in the previous frames
     PARAMETERS: All the vehicular detections of the previous frames,
@@ -135,25 +156,24 @@ def boxInPreviousFrames(previous_frame_detections, current_box, current_detectio
             coord = coordinate_list[index[0]]
 
     if dist > (max(width, height) / 2):
-        return False
+        return -1
 
     # Keeping the vehicle ID constant
-    current_detections[(centerX, centerY)] = previous_frame_detections[frame_num][coord]
-    return True
+    return previous_frame_detections[frame_num][coord]
 
 
 def count_vehicles(
-    labels,
+    labels: dict[str, str],
     idxs,
-    boxes,
-    classIDs,
-    vehicle_count,
-    previous_frame_detections,
+    boxes: list[list[int]],
+    classIDs: list[int],
+    vehicle_count: int,
+    previous_frame_detections: list[dict[tuple, int]],
     frame,
-    type_counts,
-    use_x,
+    type_counts: dict[str, int],
+    use_x: bool,
 ):
-    current_detections = {}
+    current_detections: dict[tuple, int] = {}
     # ensure at least one detection exists
     if len(idxs) > 0:
         # loop over the indices we are keeping
@@ -171,19 +191,21 @@ def count_vehicles(
             vehicle_type = labels[classIDs[i]]
             if vehicle_type in list_of_vehicles:
                 current_detections[(centerX, centerY)] = vehicle_count
-                if not boxInPreviousFrames(
+                prev_id = boxInPreviousFrames(
                     previous_frame_detections,
                     (centerX, centerY, w, h),
                     current_detections,
-                ):
+                )
+                if prev_id >= 0:
+                    current_detections[(centerX, centerY)] = prev_id
+                else:
                     vehicle_count += 1
                     type_counts[vehicle_type] += 1
                     # vehicle_crossed_line_flag += True
-                # else: #ID assigning
+
                 # Add the current detection mid-point of box to the list of detected items
                 # Get the ID corresponding to the current detection
-
-                ID = current_detections.get((centerX, centerY))
+                ID = current_detections[(centerX, centerY)]
                 # If there are two detections having the same ID due to being too close,
                 # then assign a new ID to current detection.
                 if list(current_detections.values()).count(ID) > 1:
@@ -208,17 +230,17 @@ def count_vehicles(
 
 def run(
     labels,
-    colors,
+    colors: list[list[int]],
     weightsPath,
     configPath,
     inputVideoPath,
     outputVideoPath,
     preDefinedConfidence,
     preDefinedThreshold,
-    use_gpu,
-    save_video,
-    display_video,
-):
+    use_gpu: bool,
+    save_video: bool,
+    display_video: bool,
+) -> None:
     # load our YOLO object detector trained on COCO dataset (80 classes)
     # and determine only the *output* layer names that we need from YOLO
     print("[INFO] loading YOLO from disk...")
@@ -239,14 +261,15 @@ def run(
     video_height = int(videoStream.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     # Specifying coordinates for a default line
-    # x1_line = 0
-    # y1_line = video_height // 2
-    # x2_line = video_width
-    # y2_line = video_height // 2
+    x1_line = 0
+    y1_line = video_height // 2
+    x2_line = video_width
+    y2_line = video_height // 2
 
     # Initialization
-    previous_frame_detections = [{(0, 0): 0} for i in range(FRAMES_BEFORE_CURRENT)]
-    # previous_frame_detections = [spatial.KDTree([(0,0)])]*FRAMES_BEFORE_CURRENT # Initializing all trees
+    previous_frame_detections: list[dict[tuple, int]] = [
+        {(0, 0): 0} for i in range(FRAMES_BEFORE_CURRENT)
+    ]
     num_frames, last_num_frames, vehicle_count = 0, 0, 0
     type_counts: dict[str, int] = defaultdict(int)
     if save_video:
@@ -262,9 +285,11 @@ def run(
         # vehicle_crossed_line_flag = False
 
         # Calculating fps each second
-        start_time, num_frames, last_num_frames = displayFPS(start_time, num_frames, last_num_frames)
+        start_time, num_frames, last_num_frames = displayFPS(
+            start_time, num_frames, last_num_frames
+        )
         # read the next frame from the file
-        (grabbed, frame) = videoStream.read()
+        grabbed, frame = videoStream.read()
 
         # if the frame was not grabbed, then we have reached the end of the stream
         if not grabbed:
@@ -277,9 +302,7 @@ def run(
             frame, 1 / 255.0, (inputWidth, inputHeight), swapRB=True, crop=False
         )
         net.setInput(blob)
-        # start = time.time()
         layerOutputs = net.forward(ln)
-        # end = time.time()
 
         # loop over each of the layer outputs
         for output in layerOutputs:
@@ -288,7 +311,7 @@ def run(
                 # extract the class ID and confidence (i.e., probability)
                 # of the current object detection
                 scores = detection[5:]
-                classID = np.argmax(scores)
+                classID = int(np.argmax(scores))
                 confidence = scores[classID]
 
                 # filter out weak predictions by ensuring the detected
@@ -297,8 +320,7 @@ def run(
                     # scale the bounding box coordinates back relative to
                     # the size of the image, keeping in mind that YOLO
                     # actually returns the center (x, y)-coordinates of
-                    # the bounding box followed by the boxes' width and
-                    # height
+                    # the bounding box followed by the boxes' width and height
                     box = detection[0:4] * np.array(
                         [video_width, video_height, video_width, video_height]
                     )
@@ -310,8 +332,7 @@ def run(
                     y = int(centerY - (height / 2))
 
                     # Printing the info of the detection
-                    # print('\nName:\t', labels[classID],
-                    # '\t|\tBOX:\t', x,y)
+                    # print(f"Name: {labels[classID]} | BOX: f{x} f{y}")
 
                     # update our list of bounding box coordinates,
                     # confidences, and class IDs
@@ -319,6 +340,7 @@ def run(
                     confidences.append(float(confidence))
                     classIDs.append(classID)
 
+        cv2.line(frame, (x1_line, y1_line), (x2_line, y2_line), (0, 0xFF, 0), 2)
         # # Changing line color to green if a vehicle in the frame has crossed the line
         # if vehicle_crossed_line_flag:
         #   cv2.line(frame, (x1_line, y1_line), (x2_line, y2_line), (0, 0xFF, 0), 2)
@@ -334,7 +356,9 @@ def run(
 
         # Draw detection box
         if save_video or display_video:
-            drawDetectionBoxes(idxs, boxes, classIDs, confidences, frame, labels, colors)
+            drawDetectionBoxes(
+                idxs, boxes, classIDs, confidences, frame, labels, colors
+            )
 
         vehicle_count, current_detections, type_counts = count_vehicles(
             labels,
@@ -364,7 +388,6 @@ def run(
 
         # Updating with the current frame detections
         previous_frame_detections.pop(0)  # Removing the first frame from the list
-        # previous_frame_detections.append(spatial.KDTree(current_detections))
         previous_frame_detections.append(current_detections)
 
     # release the file pointers
@@ -390,7 +413,7 @@ def main():
         display_video,
     ) = parseCommandLineArguments()
     # Initialize a list of colors to represent each possible class label
-    colors = np.random.randint(0, 255, size=(len(labels), 3), dtype="uint8")
+    colors = np.random.randint(0, 255, size=(len(labels), 3), dtype="uint8").tolist()
     run(
         labels,
         colors,
